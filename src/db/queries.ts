@@ -65,13 +65,14 @@ export interface MessageInsert {
 	content_thinking: string | null;
 	tool_calls: string | null;
 	tool_results: string | null;
+	meta_json?: string | null;
 }
 
 export function insertMessage(db: Database.Database, m: MessageInsert): void {
 	db.prepare(`
-		INSERT OR IGNORE INTO messages (id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, content_hash)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`).run(m.id, m.session_id, m.parent_id, m.timestamp, m.role, m.content_text, m.content_thinking, m.tool_calls, m.tool_results, null);
+		INSERT OR IGNORE INTO messages (id, session_id, parent_id, timestamp, role, content_text, content_thinking, tool_calls, tool_results, content_hash, meta_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`).run(m.id, m.session_id, m.parent_id, m.timestamp, m.role, m.content_text, m.content_thinking, m.tool_calls, m.tool_results, null, m.meta_json ?? null);
 }
 
 export function countMessages(db: Database.Database, sessionId: string): number {
@@ -80,6 +81,22 @@ export function countMessages(db: Database.Database, sessionId: string): number 
 
 export function getSessionMessages(db: Database.Database, sessionId: string): Array<{ role: string; content_text: string | null; content_thinking: string | null; tool_calls: string | null; timestamp: string | null }> {
 	return db.prepare("SELECT role, content_text, content_thinking, tool_calls, timestamp FROM messages WHERE session_id = ? ORDER BY rowid ASC").all(sessionId) as any[];
+}
+
+export function getSessionMessagesFull(db: Database.Database, sessionId: string): Array<{ id: string; session_id: string; parent_id: string | null; timestamp: string | null; role: string; content_text: string | null; content_thinking: string | null; tool_calls: string | null; tool_results: string | null; meta_json: string | null }> {
+	return db.prepare(`
+		SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking,
+		       tool_calls, tool_results, meta_json
+		FROM messages WHERE session_id = ? ORDER BY rowid ASC
+	`).all(sessionId) as any[];
+}
+
+export function getMessageById(db: Database.Database, id: string): { id: string; session_id: string; parent_id: string | null; timestamp: string | null; role: string; content_text: string | null; content_thinking: string | null; tool_calls: string | null; tool_results: string | null; meta_json: string | null } | undefined {
+	return db.prepare(`
+		SELECT id, session_id, parent_id, timestamp, role, content_text, content_thinking,
+		       tool_calls, tool_results, meta_json
+		FROM messages WHERE id = ?
+	`).get(id) as any;
 }
 
 // ── Proposals ──
@@ -98,11 +115,46 @@ export function listProposals(db: Database.Database, status?: string): Proposal[
 }
 
 export function acceptProposal(db: Database.Database, id: string): boolean {
-	return db.prepare("UPDATE proposals SET status = 'accepted' WHERE id = ? AND status = 'new'").run(id).changes > 0;
+	// Both 'new' (legacy) and 'open' (framework) are valid pre-accept states.
+	return db.prepare("UPDATE proposals SET status = 'accepted' WHERE id = ? AND status IN ('new', 'open')").run(id).changes > 0;
 }
 
 export function rejectProposal(db: Database.Database, id: string): boolean {
-	return db.prepare("UPDATE proposals SET status = 'rejected' WHERE id = ? AND status = 'new'").run(id).changes > 0;
+	return db.prepare("UPDATE proposals SET status = 'rejected' WHERE id = ? AND status IN ('new', 'open')").run(id).changes > 0;
+}
+
+/**
+ * List proposals joined with their source analysis_node (if any).
+ * Used by the proposals command and the tool to render richer
+ * output: target_type, target_path, title, confidence, etc.
+ */
+export function listProposalsEnriched(db: Database.Database, status?: string): Array<{
+	id: string;
+	created_at: string;
+	updated_at: string | null;
+	session_id: string;
+	analyzer_id: string | null;
+	target_type: string | null;
+	target_path: string | null;
+	title: string | null;
+	summary: string;
+	detail: string | null;
+	evidence: string | null;
+	confidence: number | null;
+	severity: string;
+	dedup_key: string | null;
+	status: string;
+	analysis_node_id: string | null;
+}> {
+	const where = status ? "WHERE status = ?" : "";
+	const params = status ? [status] : [];
+	return db.prepare(`
+		SELECT id, created_at, updated_at, session_id, analyzer_id,
+		       target_type, target_path, title, summary, detail, evidence,
+		       confidence, severity, dedup_key, status, analysis_node_id
+		FROM proposals ${where}
+		ORDER BY created_at DESC
+	`).all(...params) as any;
 }
 
 export function computeDedupHash(target: string, severity: string, summary: string): string {
