@@ -1,6 +1,19 @@
+/**
+ * Database schema for pi-prospector.
+ * Migrations are applied sequentially. Each migration is idempotent (IF NOT EXISTS).
+ */
+
 import Database from "better-sqlite3";
 
 export function migrate(db: Database.Database): void {
+	migration001(db);
+	migration002(db);
+}
+
+/**
+ * Migration 001: Original v1 schema (sessions, messages, proposals, FTS5).
+ */
+function migration001(db: Database.Database): void {
 	db.exec(`
 		CREATE TABLE IF NOT EXISTS sessions (
 			id TEXT PRIMARY KEY,
@@ -41,6 +54,13 @@ export function migrate(db: Database.Database): void {
 			evidence TEXT,
 			status TEXT NOT NULL DEFAULT 'new',
 			dedup_hash TEXT,
+			source_node_id TEXT,
+			analyzer_id TEXT,
+			target_type TEXT,
+			target_path TEXT,
+			title TEXT,
+			confidence REAL,
+			updated_at TEXT,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		);
 
@@ -71,4 +91,141 @@ export function migrate(db: Database.Database): void {
 			VALUES ('delete', OLD.rowid, OLD.content_text, OLD.content_thinking);
 		END;
 	`);
+}
+
+/**
+ * Migration 002: Analyzer framework tables.
+ */
+function migration002(db: Database.Database): void {
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS analyzer_defs (
+			id              TEXT PRIMARY KEY,
+			label           TEXT NOT NULL,
+			description     TEXT,
+			anchor_span     TEXT NOT NULL,
+			dependencies    TEXT NOT NULL DEFAULT '[]',
+			created_at      TEXT NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS analyzer_versions (
+			analyzer_id         TEXT NOT NULL,
+			version_id          TEXT NOT NULL,
+			implementation_kind TEXT NOT NULL,
+			code_ref            TEXT,
+			created_at          TEXT NOT NULL,
+			PRIMARY KEY (analyzer_id, version_id),
+			FOREIGN KEY (analyzer_id) REFERENCES analyzer_defs(id)
+		);
+
+		CREATE TABLE IF NOT EXISTS prompt_registry (
+			hash            TEXT PRIMARY KEY,
+			content         TEXT NOT NULL,
+			role             TEXT,
+			created_at      TEXT NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS analyzer_configs (
+			id              TEXT PRIMARY KEY,
+			analyzer_id     TEXT NOT NULL,
+			config_hash     TEXT NOT NULL UNIQUE,
+			config_json     TEXT NOT NULL,
+			label           TEXT,
+			created_at      TEXT NOT NULL,
+			FOREIGN KEY (analyzer_id) REFERENCES analyzer_defs(id)
+		);
+
+		CREATE TABLE IF NOT EXISTS analysis_runs (
+			id                      TEXT PRIMARY KEY,
+			analyzer_id             TEXT NOT NULL,
+			analyzer_version_id     TEXT NOT NULL,
+			config_id               TEXT NOT NULL,
+			session_id              TEXT NOT NULL,
+			status                  TEXT NOT NULL DEFAULT 'planned',
+			prompt_bundle_hash      TEXT NOT NULL,
+			started_at              TEXT NOT NULL,
+			finished_at             TEXT,
+			model_spec              TEXT,
+			cost_usd                REAL DEFAULT 0,
+			tokens_used             INTEGER DEFAULT 0,
+			nodes_produced          INTEGER DEFAULT 0,
+			nodes_skipped           INTEGER DEFAULT 0,
+			error_message           TEXT,
+			FOREIGN KEY (analyzer_id, analyzer_version_id) REFERENCES analyzer_versions(analyzer_id, version_id),
+			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_runs_session ON analysis_runs(session_id);
+		CREATE INDEX IF NOT EXISTS idx_runs_status ON analysis_runs(status);
+
+		CREATE TABLE IF NOT EXISTS analysis_nodes (
+			id                  TEXT PRIMARY KEY,
+			session_id          TEXT NOT NULL,
+			analyzer_id          TEXT NOT NULL,
+			analyzer_version_id  TEXT NOT NULL,
+			config_id            TEXT NOT NULL,
+			run_id               TEXT NOT NULL,
+			node_kind            TEXT NOT NULL,
+			content_json         TEXT NOT NULL,
+			source_set_hash      TEXT NOT NULL,
+			input_hash           TEXT NOT NULL,
+			created_at           TEXT NOT NULL,
+			model_used           TEXT,
+			cost_usd             REAL DEFAULT 0,
+			tokens_used           INTEGER DEFAULT 0,
+			duration_ms           INTEGER,
+			FOREIGN KEY (run_id) REFERENCES analysis_runs(id),
+			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_nodes_session      ON analysis_nodes(session_id);
+		CREATE INDEX IF NOT EXISTS idx_nodes_analyzer     ON analysis_nodes(analyzer_id, analyzer_version_id);
+		CREATE INDEX IF NOT EXISTS idx_nodes_kind          ON analysis_nodes(node_kind);
+		CREATE INDEX IF NOT EXISTS idx_nodes_input_hash   ON analysis_nodes(input_hash);
+		CREATE INDEX IF NOT EXISTS idx_nodes_source_hash   ON analysis_nodes(source_set_hash);
+		CREATE INDEX IF NOT EXISTS idx_nodes_config       ON analysis_nodes(config_id);
+		CREATE INDEX IF NOT EXISTS idx_nodes_idempotency ON analysis_nodes(analyzer_id, analyzer_version_id, config_id, source_set_hash);
+
+		CREATE TABLE IF NOT EXISTS analysis_edges (
+			from_node_id    TEXT NOT NULL,
+			to_ref_kind     TEXT NOT NULL,
+			to_ref_id       TEXT NOT NULL,
+			edge_kind       TEXT NOT NULL,
+			ordinal         INTEGER DEFAULT 0,
+			PRIMARY KEY (from_node_id, to_ref_kind, to_ref_id, edge_kind, ordinal),
+			FOREIGN KEY (from_node_id) REFERENCES analysis_nodes(id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_edges_from   ON analysis_edges(from_node_id);
+		CREATE INDEX IF NOT EXISTS idx_edges_to     ON analysis_edges(to_ref_kind, to_ref_id);
+		CREATE INDEX IF NOT EXISTS idx_edges_kind   ON analysis_edges(edge_kind);
+
+		CREATE TABLE IF NOT EXISTS analysis_progress (
+			analyzer_id         TEXT NOT NULL,
+			analyzer_version_id  TEXT NOT NULL,
+			config_id            TEXT NOT NULL,
+			session_id           TEXT NOT NULL,
+			cursor_json          TEXT,
+			last_run_id          TEXT,
+			total_analyzed      INTEGER DEFAULT 0,
+			status              TEXT NOT NULL DEFAULT 'ok',
+			error_message        TEXT,
+			updated_at           TEXT NOT NULL,
+			PRIMARY KEY (analyzer_id, analyzer_version_id, config_id, session_id),
+			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		);
+	`);
+
+	// Add new columns to proposals table if they don't exist
+	addColumnIfNotExists(db, "proposals", "source_node_id", "TEXT");
+	addColumnIfNotExists(db, "proposals", "analyzer_id", "TEXT");
+	addColumnIfNotExists(db, "proposals", "target_type", "TEXT");
+	addColumnIfNotExists(db, "proposals", "target_path", "TEXT");
+	addColumnIfNotExists(db, "proposals", "title", "TEXT");
+	addColumnIfNotExists(db, "proposals", "confidence", "REAL");
+	addColumnIfNotExists(db, "proposals", "updated_at", "TEXT");
+}
+
+function addColumnIfNotExists(db: Database.Database, table: string, column: string, definition: string): void {
+	const rows = db.pragma(`table_info(${table})`) as Array<{ name: string }>;
+	const exists = rows.some(r => r.name === column);
+	if (!exists) {
+		db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+	}
 }
