@@ -19,6 +19,7 @@ export interface ParsedMessage {
 		thinking: string | null;
 		tool_calls: Array<{ name: string; arguments: Record<string, unknown> }> | null;
 		tool_results: Array<{ toolCallId: string; toolName: string; isError: boolean; textLength: number }> | null;
+		meta?: Record<string, unknown> | null;
 	};
 }
 
@@ -67,6 +68,7 @@ export function parseLine(line: string): ParsedLine | null {
 		let thinking: string | null = null;
 		let tool_calls: ParsedMessage["entry"]["tool_calls"] = null;
 		let tool_results: ParsedMessage["entry"]["tool_results"] = null;
+		let meta: Record<string, unknown> | null = null;
 
 		if (typeof content === "string") {
 			text = content;
@@ -104,9 +106,23 @@ export function parseLine(line: string): ParsedLine | null {
 			}];
 		}
 
+		// Capture assistant / model metadata for analyzers that need
+		// model, usage, stopReason, etc.
+		if (msg && typeof msg === "object") {
+			const m = msg as Record<string, unknown>;
+			if (m.model !== undefined || m.usage !== undefined || m.stopReason !== undefined || m.api !== undefined || m.provider !== undefined) {
+				meta = {};
+				if (m.model !== undefined) meta.model = m.model;
+				if (m.api !== undefined) meta.api = m.api;
+				if (m.provider !== undefined) meta.provider = m.provider;
+				if (m.stopReason !== undefined) meta.stop_reason = m.stopReason;
+				if (m.usage !== undefined) meta.usage = m.usage;
+			}
+		}
+
 		return {
 			kind: "message",
-			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking, tool_calls, tool_results },
+			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking, tool_calls, tool_results, meta },
 		};
 	}
 
@@ -131,7 +147,7 @@ export function parseLine(line: string): ParsedLine | null {
 
 		return {
 			kind: "message",
-			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking: null, tool_calls: null, tool_results: null },
+			entry: { id, parentId, timestamp, role: role as MessageRole, text, thinking: null, tool_calls: null, tool_results: null, meta: null },
 		};
 	}
 
