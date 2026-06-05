@@ -21,11 +21,20 @@ import { computeSourceSetHash, computeInputHash, computePromptBundleHash } from 
 import { materializeProposals } from "./proposal-materializer.js";
 import { resolveModelTier, DEFAULT_MODEL_TIERS } from "./model-tiers.js";
 
+export type LLMProvider = (request: LLMRequest, modelTiers?: ModelTierConfig) => Promise<LLMResponse>;
+
 export class AnalyzerFramework {
 	private analyzers: Map<string, Analyzer> = new Map();
 	private db: Database.Database;
 
-	constructor(db: Database.Database) { this.db = db; }
+	private llmProvider: LLMProvider;
+
+	constructor(db: Database.Database, llmProvider?: LLMProvider) {
+		this.db = db;
+		this.llmProvider = llmProvider ?? ((_req: LLMRequest) => {
+			throw new Error("No LLM provider configured. Pass an llmProvider to AnalyzerFramework constructor, or use --model to specify an Ollama model.");
+		});
+	}
 
 	register(analyzer: Analyzer): void {
 		this.analyzers.set(analyzer.def.id, analyzer);

@@ -7,27 +7,22 @@ import { AnalyzerFramework } from "../analyze/framework.js";
 import { turnPairCoreAnalyzer } from "../analyze/analyzers/turn-pair-core/index.js";
 import { turnPairLLMAnalyzer } from "../analyze/analyzers/turn-pair-llm/index.js";
 import { sessionOverviewAnalyzer } from "../analyze/analyzers/session-overview/index.js";
+import { callOllamaLLM } from "../analyze/ollama-llm.js";
 
 export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-analyze", {
-		description: "Run LLM analysis over unanalyzed sessions to generate proposals",
-		handler: async (args: string, ctx: { ui: { notify: (msg: string, level: string) => void } }) => {
+		description: "Run analysis over unanalyzed sessions to generate proposals",
+		handler: async (args: string, ctx: { ui: { notify: (msg: string, level?: string) => void } }) => {
 			const config = loadConfig();
 			const parsedArgs = parseArgs(args ?? "");
 			const modelSpec = parsedArgs.model ?? config.model;
-
-			if (!modelSpec) {
-				const msg = "No model configured. Use --model provider/model or set in ~/.pi/agent/prospector.json";
-				ctx.ui.notify(msg, "error");
-				console.log(msg);
-				return;
-			}
+			const limit = parsedArgs.limit;
 
 			const db = new Database(getDbPath(config));
 			migrate(db);
 
 			try {
-				const unanalyzed = getUnanalyzedSessions(db, parsedArgs.limit);
+				const unanalyzed = getUnanalyzedSessions(db, limit);
 				if (unanalyzed.length === 0) {
 					const msg = "No unanalyzed sessions. Run /prospect-sync first.";
 					ctx.ui.notify(msg, "info");
@@ -35,35 +30,42 @@ export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 					return;
 				}
 
-				const startMsg = `Analyzing ${unanalyzed.length} session(s) with ${modelSpec}...`;
+				const effectiveLimit = limit ?? unanalyzed.length;
+				const sessionsToAnalyze = unanalyzed.slice(0, effectiveLimit);
+				const startMsg = `Analyzing ${sessionsToAnalyze.length} session(s)${modelSpec ? ` with ${modelSpec}` : " (deterministic only)"}...`;
 				ctx.ui.notify(startMsg, "info");
 				console.log(startMsg);
 
-				const framework = new AnalyzerFramework(db);
+				const llmProvider = modelSpec ? callOllamaLLM : undefined;
+				const framework = new AnalyzerFramework(db, llmProvider);
 				framework.register(turnPairCoreAnalyzer);
-				framework.register(turnPairLLMAnalyzer);
-				framework.register(sessionOverviewAnalyzer);
 
-				let totalProposals = 0;
+				// Only register LLM analyzers if we have a model
+				if (modelSpec) {
+					framework.register(turnPairLLMAnalyzer);
+					framework.register(sessionOverviewAnalyzer);
+				}
+
+				let totalNodes = 0;
 				let errors = 0;
 
-				for (const session of unanalyzed) {
+				for (const session of sessionsToAnalyze) {
 					try {
 						const result = await framework.runAll(session.id, undefined, config.modelTiers);
-						totalProposals += result.totalNodesProduced;
+						totalNodes += result.totalNodesProduced;
 						if (result.errors.length > 0) {
 							for (const e of result.errors) console.error(`  Warning: ${e}`);
 						}
 						markAnalyzed(db, session.id);
 					} catch (err) {
 						errors++;
-						const errMsg = `Error on session ${session.id}: ${err}`;
+						const errMsg = `Error on session ${session.id}: ${err instanceof Error ? err.message : String(err)}`;
 						ctx.ui.notify(errMsg, "warning");
 						console.error(errMsg);
 					}
 				}
 
-				const doneMsg = `Done. ${unanalyzed.length - errors} analyzed, ${totalProposals} nodes produced, ${errors} errors.`;
+				const doneMsg = `Done. ${sessionsToAnalyze.length - errors} analyzed, ${totalNodes} nodes produced, ${errors} errors.`;
 				ctx.ui.notify(doneMsg, "info");
 				console.log(doneMsg);
 			} finally {

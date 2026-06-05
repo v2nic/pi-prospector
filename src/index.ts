@@ -14,7 +14,8 @@ export default function (pi: ExtensionAPI) {
 }
 
 // Re-export framework components for programmatic use
-export { AnalyzerFramework } from "./analyze/framework.js";
+export { AnalyzerFramework, LLMProvider } from "./analyze/framework.js";
 export { turnPairCoreAnalyzer } from "./analyze/analyzers/turn-pair-core/index.js";
 export { turnPairLLMAnalyzer } from "./analyze/analyzers/turn-pair-llm/index.js";
 export { sessionOverviewAnalyzer } from "./analyze/analyzers/session-overview/index.js";
+export { callOllamaLLM } from "./analyze/ollama-llm.js";

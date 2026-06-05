@@ -10,6 +10,7 @@ import type {
 	SessionOverviewProperties, ImprovementProposal,
 } from "../../types.js";
 import { computeSourceSetHash, computeInputHash, computePromptHash } from "../../input-hash.js";
+import { EDGE_KIND_ANCHORS, EDGE_KIND_CONSUMES, EDGE_KIND_USES_PROMPT, EDGE_KIND_USES_CONFIG, REF_KIND_SESSION } from "../../edge-kinds.js";
 import { buildStructuredDigest } from "./digest.js";
 import { splitDigestIntoSegments, mapPhase } from "./compress.js";
 import { SESSION_REDUCE_PROMPT, SESSION_OVERVIEW_TOOL_SCHEMA } from "./compress.js";
@@ -81,11 +82,11 @@ export async function analyzeSessionOverview(
 	};
 
 	const edges: AnalysisResult["edges"] = [];
-	edges.push({ toRefKind: "session", toRefId: ctx.run.session_id, edgeKind: "anchors" });
-	for (const node of pairNodes) edges.push({ toRefKind: "analysis_node", toRefId: node.id, edgeKind: "consumes" });
-	for (const node of llmNodes) edges.push({ toRefKind: "analysis_node", toRefId: node.id, edgeKind: "consumes" });
-	edges.push({ toRefKind: "prompt_version", toRefId: reducePromptHash, edgeKind: "uses_prompt" });
-	edges.push({ toRefKind: "config_version", toRefId: ctx.config.id, edgeKind: "uses_config" });
+	edges.push({ toRefKind: REF_KIND_SESSION, toRefId: ctx.run.session_id, edgeKind: EDGE_KIND_ANCHORS });
+	for (const node of pairNodes) edges.push({ toRefKind: "analysis_node", toRefId: node.id, edgeKind: EDGE_KIND_CONSUMES });
+	for (const node of llmNodes) edges.push({ toRefKind: "analysis_node", toRefId: node.id, edgeKind: EDGE_KIND_CONSUMES });
+	edges.push({ toRefKind: "prompt_version", toRefId: reducePromptHash, edgeKind: EDGE_KIND_USES_PROMPT });
+	edges.push({ toRefKind: "config_version", toRefId: ctx.config.id, edgeKind: EDGE_KIND_USES_CONFIG });
 
 	return { contentJson: properties, nodeKind: "summary", anchorKind: "session", anchorRef: ctx.run.session_id, edges };
 }
