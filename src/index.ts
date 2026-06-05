@@ -12,3 +12,9 @@ export default function (pi: ExtensionAPI) {
 	registerAnalyzeCommand(pi);
 	registerProspectTool(pi);
 }
+
+// Re-export framework components for programmatic use
+export { AnalyzerFramework } from "./analyze/framework.js";
+export { turnPairCoreAnalyzer } from "./analyze/analyzers/turn-pair-core/index.js";
+export { turnPairLLMAnalyzer } from "./analyze/analyzers/turn-pair-llm/index.js";
+export { sessionOverviewAnalyzer } from "./analyze/analyzers/session-overview/index.js";

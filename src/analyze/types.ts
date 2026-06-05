@@ -263,6 +263,13 @@ export const KeyFrictionPointSchema = Type.Object({
 });
 export type KeyFrictionPoint = Static<typeof KeyFrictionPointSchema>;
 
+export const SentimentArcPointSchema = Type.Object({
+	segment: Type.Number(),
+	sentiment: Type.String(),
+	key_event: Type.String(),
+});
+export type SentimentArcPoint = Static<typeof SentimentArcPointSchema>;
+
 export const ImprovementProposalSchema = Type.Object({
 	target_type: TargetTypeEnum, target_path: Type.Optional(Type.String()), title: Type.String(),
 	summary: Type.String(), detail: Type.String(), evidence: Type.String(),

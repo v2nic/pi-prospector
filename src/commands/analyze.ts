@@ -1,8 +1,12 @@
 import type { ExtensionAPI } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
-import { getUnanalyzedSessions, getSessionMessages, markAnalyzed } from "../db/queries.js";
+import { getUnanalyzedSessions, markAnalyzed } from "../db/queries.js";
 import { getDbPath, loadConfig } from "../config.js";
+import { AnalyzerFramework } from "../analyze/framework.js";
+import { turnPairCoreAnalyzer } from "../analyze/analyzers/turn-pair-core/index.js";
+import { turnPairLLMAnalyzer } from "../analyze/analyzers/turn-pair-llm/index.js";
+import { sessionOverviewAnalyzer } from "../analyze/analyzers/session-overview/index.js";
 
 export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-analyze", {
@@ -19,7 +23,7 @@ export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const db = new Database(getDbPath());
+			const db = new Database(getDbPath(config));
 			migrate(db);
 
 			try {
@@ -35,18 +39,21 @@ export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 				ctx.ui.notify(startMsg, "info");
 				console.log(startMsg);
 
+				const framework = new AnalyzerFramework(db);
+				framework.register(turnPairCoreAnalyzer);
+				framework.register(turnPairLLMAnalyzer);
+				framework.register(sessionOverviewAnalyzer);
+
 				let totalProposals = 0;
 				let errors = 0;
 
 				for (const session of unanalyzed) {
 					try {
-						const messages = getSessionMessages(db, session.id);
-						if (messages.length < 2) {
-							markAnalyzed(db, session.id);
-							continue;
+						const result = await framework.runAll(session.id, undefined, config.modelTiers);
+						totalProposals += result.totalNodesProduced;
+						if (result.errors.length > 0) {
+							for (const e of result.errors) console.error(`  Warning: ${e}`);
 						}
-
-						// TODO: Call LLM via @earendil-works/pi-ai
 						markAnalyzed(db, session.id);
 					} catch (err) {
 						errors++;
@@ -56,7 +63,7 @@ export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 					}
 				}
 
-				const doneMsg = `Done. ${unanalyzed.length - errors} analyzed, ${totalProposals} proposals, ${errors} errors.`;
+				const doneMsg = `Done. ${unanalyzed.length - errors} analyzed, ${totalProposals} nodes produced, ${errors} errors.`;
 				ctx.ui.notify(doneMsg, "info");
 				console.log(doneMsg);
 			} finally {
@@ -70,7 +77,7 @@ function parseArgs(raw: string): { model?: string; limit?: number } {
 	const result: { model?: string; limit?: number } = {};
 	const parts = raw.split(/\s+/);
 	for (let i = 0; i < parts.length; i++) {
-		if (parts[i] === "--model" && parts[i + 1]) result.model = parts[++i];
+		if (parts[i] === "--model" && parts[i + 1]) result.model = parts[++i]!;
 		else if (parts[i] === "--limit" && parts[i + 1]) {
 			const n = parseInt(parts[++i]!, 10);
 			if (!isNaN(n)) result.limit = n;

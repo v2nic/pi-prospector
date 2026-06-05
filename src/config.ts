@@ -8,12 +8,7 @@ const DEFAULT_DB_PATH = path.join(os.homedir(), ".pi", "agent", "prospector.db")
 const SESSIONS_DIR = path.join(os.homedir(), ".pi", "agent", "sessions");
 
 export function loadConfig(): ProspectorConfig {
-	try {
-		const raw = fs.readFileSync(CONFIG_PATH, "utf-8");
-		return JSON.parse(raw) as ProspectorConfig;
-	} catch {
-		return {};
-	}
+	try { const raw = fs.readFileSync(CONFIG_PATH, "utf-8"); return JSON.parse(raw) as ProspectorConfig; } catch { return {}; }
 }
 
 export function getDbPath(config?: ProspectorConfig): string {
@@ -22,6 +17,4 @@ export function getDbPath(config?: ProspectorConfig): string {
 	return DEFAULT_DB_PATH;
 }
 
-export function getSessionsDir(): string {
-	return SESSIONS_DIR;
-}
+export function getSessionsDir(): string { return SESSIONS_DIR; }
