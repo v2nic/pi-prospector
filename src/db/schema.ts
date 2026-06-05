@@ -47,12 +47,12 @@ function migration001(db: Database.Database): void {
 			id TEXT PRIMARY KEY,
 			created_at TEXT NOT NULL,
 			session_id TEXT NOT NULL,
-			target TEXT NOT NULL,
-			severity TEXT NOT NULL,
-			summary TEXT NOT NULL,
+			target TEXT NOT NULL DEFAULT '',
+			severity TEXT NOT NULL DEFAULT 'suggestion',
+			summary TEXT NOT NULL DEFAULT '',
 			detail TEXT,
 			evidence TEXT,
-			status TEXT NOT NULL DEFAULT 'new',
+			status TEXT NOT NULL DEFAULT 'open',
 			dedup_hash TEXT,
 			source_node_id TEXT,
 			analyzer_id TEXT,
@@ -220,6 +220,20 @@ function migration002(db: Database.Database): void {
 	addColumnIfNotExists(db, "proposals", "title", "TEXT");
 	addColumnIfNotExists(db, "proposals", "confidence", "REAL");
 	addColumnIfNotExists(db, "proposals", "updated_at", "TEXT");
+
+	// Migrate v1 proposal status values to v2
+	// 'new' → 'open', 'accepted' → 'applied'
+	db.exec("UPDATE proposals SET status = 'open' WHERE status = 'new'");
+	db.exec("UPDATE proposals SET status = 'applied' WHERE status = 'accepted'");
+
+	// Copy dedup_hash to dedup_key if dedup_key doesn't exist yet
+	// (v2 uses dedup_key, v1 used dedup_hash)
+	const colCheck = db.pragma("table_info(proposals)") as Array<{ name: string }>;
+	const hasDedupKey = colCheck.some(r => r.name === "dedup_key");
+	if (!hasDedupKey) {
+		addColumnIfNotExists(db, "proposals", "dedup_key", "TEXT");
+		db.exec("UPDATE proposals SET dedup_key = dedup_hash WHERE dedup_key IS NULL");
+	}
 }
 
 function addColumnIfNotExists(db: Database.Database, table: string, column: string, definition: string): void {

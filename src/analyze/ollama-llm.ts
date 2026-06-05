@@ -3,8 +3,7 @@
  * Calls Ollama's local API (http://localhost:11434) to run LLM inference.
  */
 
-import type { LLMRequest, LLMResponse } from "./analyze/types.js";
-import type { ModelTierConfig } from "./analyze/types.js";
+import type { LLMRequest, LLMResponse, ModelTierConfig } from "./types.js";
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
 

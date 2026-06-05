@@ -61,7 +61,7 @@ export interface SyncResult { sessionsProcessed: number; sessionsSkipped: number
 // ─── Proposals (v1 compatibility) ───
 
 export type ProposalSeverity = "friction" | "correction" | "waste" | "suggestion";
-export type ProposalStatus = "new" | "accepted" | "rejected";
+export type ProposalStatus = "open" | "applied" | "rejected" | "duplicate";
 
 export interface NewProposal { sessionId: string; target: string; severity: ProposalSeverity; summary: string; detail: string; evidence: string; dedupHash: string; }
 export interface Proposal { id: string; created_at: string; session_id: string; target: string; severity: ProposalSeverity; summary: string; detail: string; evidence: string; status: ProposalStatus; dedup_hash: string; }

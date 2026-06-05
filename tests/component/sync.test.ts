@@ -6,7 +6,7 @@ import * as os from "node:os";
 import Database from "better-sqlite3";
 import { migrate } from "../../src/db/schema.js";
 import { runSync } from "../../src/sync/index.js";
-import { getStats, insertProposal, listProposals, acceptProposal, rejectProposal } from "../../src/db/queries.js";
+import { getStats, listProposalsV2, acceptProposalV2, rejectProposalV2 } from "../../src/db/queries.js";
 
 const FIXTURES = path.resolve(import.meta.dirname, "..", "fixtures");
 
@@ -15,6 +15,28 @@ function tempDb(): { db: Database.Database; close: () => void } {
 	const db = new Database(dbPath);
 	migrate(db);
 	return { db, close: () => { db.close(); try { fs.unlinkSync(dbPath); } catch {} } };
+}
+
+/** Insert a test proposal directly into the proposals table. */
+function insertTestProposal(db: Database.Database, p: {
+	id: string;
+	session_id: string;
+	target_type?: string;
+	target_path?: string;
+	severity?: string;
+	summary: string;
+	title?: string;
+	status?: string;
+}): void {
+	db.prepare(`
+		INSERT INTO proposals (id, created_at, session_id, target, target_type, target_path, severity, summary, title, status, dedup_key, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`).run(
+		p.id, new Date().toISOString(), p.session_id, p.target_type ?? "config",
+		p.target_type ?? "config", p.target_path ?? null, p.severity ?? "suggestion",
+		p.summary, p.title ?? p.summary, p.status ?? "open",
+		`dh-${p.id}`, new Date().toISOString(),
+	);
 }
 
 describe("end-to-end sync", () => {
@@ -63,7 +85,7 @@ describe("end-to-end sync", () => {
 	});
 });
 
-describe("proposals", () => {
+describe("proposals v2", () => {
 	it("inserts and retrieves a proposal", () => {
 		const { db, close } = tempDb();
 		try {
@@ -73,22 +95,20 @@ describe("proposals", () => {
 			// Get a session ID from the DB
 			const row = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
 
-			insertProposal(db, {
+			insertTestProposal(db, {
 				id: "p-test-001",
-				created_at: new Date().toISOString(),
 				session_id: row.id,
-				target: "AGENTS.md § Tool usage",
+				target_type: "config",
+				target_path: "AGENTS.md § Tool usage",
 				severity: "friction",
 				summary: "Agent reads entire files instead of sections",
-				detail: "Details here",
-				evidence: "Evidence here",
-				status: "new",
-				dedup_hash: "test-hash-001",
+				title: "Optimize file reading",
 			});
 
-			const proposals = listProposals(db);
+			const proposals = listProposalsV2(db);
 			assert.ok(proposals.length >= 1);
-			assert.equal(proposals[0]!.target, "AGENTS.md § Tool usage");
+			assert.equal(proposals[0]!.target_type, "config");
+			assert.equal(proposals[0]!.target_path, "AGENTS.md § Tool usage");
 		} finally {
 			close();
 		}
@@ -100,17 +120,17 @@ describe("proposals", () => {
 			runSync(db, FIXTURES);
 			const row = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
 
-			insertProposal(db, { id: "p1", created_at: new Date().toISOString(), session_id: row.id, target: "t1", severity: "friction", summary: "s1", detail: "", evidence: "", status: "new", dedup_hash: "h1" });
-			insertProposal(db, { id: "p2", created_at: new Date().toISOString(), session_id: row.id, target: "t2", severity: "correction", summary: "s2", detail: "", evidence: "", status: "new", dedup_hash: "h2" });
+			insertTestProposal(db, { id: "p1", session_id: row.id, severity: "friction", summary: "s1", dedup_key: "dk1" });
+			insertTestProposal(db, { id: "p2", session_id: row.id, severity: "correction", summary: "s2", dedup_key: "dk2" });
 
-			assert.equal(acceptProposal(db, "p1"), true);
-			assert.equal(rejectProposal(db, "p2"), true);
+			assert.equal(acceptProposalV2(db, "p1"), true);
+			assert.equal(rejectProposalV2(db, "p2"), true);
 
-			const accepted = listProposals(db, "accepted");
+			const accepted = listProposalsV2(db, "applied");
 			assert.equal(accepted.length, 1);
 			assert.equal(accepted[0]!.id, "p1");
 
-			const rejected = listProposals(db, "rejected");
+			const rejected = listProposalsV2(db, "rejected");
 			assert.equal(rejected.length, 1);
 			assert.equal(rejected[0]!.id, "p2");
 		} finally {
@@ -124,12 +144,12 @@ describe("proposals", () => {
 			runSync(db, FIXTURES);
 			const row = db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string };
 
-			insertProposal(db, { id: "pa", created_at: new Date().toISOString(), session_id: row.id, target: "a", severity: "friction", summary: "a", detail: "", evidence: "", status: "new", dedup_hash: "ha" });
-			insertProposal(db, { id: "pb", created_at: new Date().toISOString(), session_id: row.id, target: "b", severity: "waste", summary: "b", detail: "", evidence: "", status: "accepted", dedup_hash: "hb" });
+			insertTestProposal(db, { id: "pa", session_id: row.id, severity: "friction", summary: "a" });
+			insertTestProposal(db, { id: "pb", session_id: row.id, severity: "waste", summary: "b", status: "applied" });
 
 			const stats = getStats(db);
-			assert.equal(stats.proposalsByStatus.new, 1);
-			assert.equal(stats.proposalsByStatus.accepted, 1);
+			assert.equal(stats.proposalsByStatus.open, 1); // "new" maps to "open" in v2
+			assert.equal(stats.proposalsByStatus.applied, 1); // "accepted" maps to "applied" in v2
 		} finally {
 			close();
 		}

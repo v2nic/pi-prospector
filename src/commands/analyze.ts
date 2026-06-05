@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "../pi-stubs.js";
+import type { ExtensionAPI, ExtensionCommandContext } from "../pi-stubs.js";
 import Database from "better-sqlite3";
 import { migrate } from "../db/schema.js";
 import { getUnanalyzedSessions, markAnalyzed } from "../db/queries.js";
@@ -8,14 +8,48 @@ import { turnPairCoreAnalyzer } from "../analyze/analyzers/turn-pair-core/index.
 import { turnPairLLMAnalyzer } from "../analyze/analyzers/turn-pair-llm/index.js";
 import { sessionOverviewAnalyzer } from "../analyze/analyzers/session-overview/index.js";
 import { callOllamaLLM } from "../analyze/ollama-llm.js";
+import type { LLMRequest, LLMResponse, ModelTierConfig } from "../analyze/types.js";
+
+/**
+ * Resolve an LLM provider function from the model specification.
+ *
+ * When running inside Pi:
+ * - If the current Pi model is an Ollama model, use it via callOllamaLLM
+ * - If --model is specified, use that Ollama model
+ *
+ * Outside Pi (standalone), falls back to callOllamaLLM with the given model spec.
+ */
+function resolveLLMProvider(
+	ctx: ExtensionCommandContext,
+	modelSpec: string,
+): (request: LLMRequest, modelTiers?: ModelTierConfig) => Promise<LLMResponse> {
+	// If the model spec is in "provider/model" format (e.g., "ollama/glm-5.1:cloud"),
+	// extract the Ollama model name
+	const ollamaModel = modelSpec.startsWith("ollama/")
+		? modelSpec.slice("ollama/".length)
+		: modelSpec;
+
+	// Default: use Ollama LLM with the specified model
+	return (request, modelTiers) => callOllamaLLM({ ...request, model: ollamaModel }, modelTiers);
+}
 
 export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("prospect-analyze", {
 		description: "Run analysis over unanalyzed sessions to generate proposals",
-		handler: async (args: string, ctx: { ui: { notify: (msg: string, level?: string) => void } }) => {
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const config = loadConfig();
 			const parsedArgs = parseArgs(args ?? "");
-			const modelSpec = parsedArgs.model ?? config.model;
+
+			// Resolve model: --model arg > config > Pi's current model (if Ollama)
+			let modelSpec = parsedArgs.model ?? config.model;
+			if (!modelSpec) {
+				// Try Pi's current model if it's an Ollama model
+				const currentModel = ctx.model;
+				if (currentModel && (currentModel.provider === "ollama" || currentModel.provider === "ollama-cloud")) {
+					modelSpec = currentModel.id;
+				}
+			}
+
 			const limit = parsedArgs.limit;
 
 			const db = new Database(getDbPath(config));
@@ -36,7 +70,8 @@ export function registerAnalyzeCommand(pi: ExtensionAPI): void {
 				ctx.ui.notify(startMsg, "info");
 				console.log(startMsg);
 
-				const llmProvider = modelSpec ? callOllamaLLM : undefined;
+				// Initialize framework with LLM provider if model is available
+				const llmProvider = modelSpec ? resolveLLMProvider(ctx, modelSpec) : undefined;
 				const framework = new AnalyzerFramework(db, llmProvider);
 				framework.register(turnPairCoreAnalyzer);
 

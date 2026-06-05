@@ -7,9 +7,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-// Import the actual modules
 import { migrate } from "../../src/db/schema.js";
-import { getStats, listProposals, insertProposal, acceptProposal, rejectProposal, computeDedupHash } from "../../src/db/queries.js";
+import { getStats, listProposalsV2, acceptProposalV2, rejectProposalV2 } from "../../src/db/queries.js";
 import { runSync } from "../../src/sync/index.js";
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-prospector-int-"));
@@ -30,7 +29,7 @@ function assert(condition: boolean, label: string, detail?: string): void {
 }
 
 console.log("═══════════════════════════════════════════");
-console.log("  pi-prospector integration tests");
+console.log("  pi-prospector integration tests (v2)");
 console.log("═══════════════════════════════════════════\n");
 
 // --- Setup: create DB and sync fixtures ---
@@ -45,78 +44,69 @@ console.log("Stats command:");
 const stats = getStats(db);
 assert(stats.totalSessions >= 1, "totalSessions >= 1", `got ${stats.totalSessions}`);
 assert(stats.totalMessages >= 1, "totalMessages >= 1", `got ${stats.totalMessages}`);
-assert(stats.proposalsByStatus.new === 0, "no proposals initially", `got ${stats.proposalsByStatus.new}`);
+assert((stats.proposalsByStatus["open"] ?? 0) === 0, "no open proposals initially", `got ${stats.proposalsByStatus["open"] ?? 0}`);
 console.log("");
 
 // --- Test: Proposals (empty) ---
 console.log("Proposals command (empty DB):");
-const emptyProposals = listProposals(db);
+const emptyProposals = listProposalsV2(db);
 assert(emptyProposals.length === 0, "no proposals initially", `got ${emptyProposals.length}`);
 console.log("");
 
-// Get a real session ID from the synced data (FK constraint requires it)
-const realSessionIds = db.prepare("SELECT id FROM sessions").all() as Array<{id: string}>;
+// Get a real session ID (FK constraint requires it)
+const realSessionIds = db.prepare("SELECT id FROM sessions").all() as Array<{ id: string }>;
 assert(realSessionIds.length >= 1, "have at least 1 synced session", `got ${realSessionIds.length}`);
 const realSessionId = realSessionIds[0]!.id;
 
-// --- Test: Insert + list proposals ---
-console.log("Proposals command (with data):");
-const id1 = insertProposal(db, {
-	id: crypto.randomUUID(),
-	created_at: new Date().toISOString(),
-	session_id: realSessionId,
-	severity: "suggestion",
-	target: "src/foo.ts",
-	summary: "Consider extracting helper function",
-	detail: "The function doStuff is too long.",
-	evidence: "Line 42-80 is a single function.",
-	status: "new",
-	dedup_hash: computeDedupHash("src/foo.ts", "suggestion", "Consider extracting helper function"),
-});
-assert(id1 !== undefined && id1.length > 0, "insertProposal returns id", `got ${id1}`);
+// --- Test: Insert + list proposals (v2) ---
+console.log("Insert and list proposals:");
+db.prepare(`
+	INSERT INTO proposals (id, created_at, session_id, target, target_type, target_path, severity, summary, title, status, dedup_key, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`).run(
+	"p-test-001", new Date().toISOString(), realSessionId, "config", "config",
+	"src/foo.ts", "suggestion", "Consider extracting helper function",
+	"Consider extracting helper function", "open", "dh-001", new Date().toISOString(),
+);
 
-const listed = listProposals(db);
-assert(listed.length === 1, "listProposals returns 1", `got ${listed.length}`);
-assert(listed[0]!.status === "new", "proposal status is 'new'", `got ${listed[0]!.status}`);
-assert(listed[0]!.severity === "suggestion", "severity is 'suggestion'", `got ${listed[0]!.severity}`);
+const listed = listProposalsV2(db);
+assert(listed.length === 1, "listProposalsV2 returns 1", `got ${listed.length}`);
+assert(listed[0]!.status === "open", "proposal status is 'open'", `got ${listed[0]!.status}`);
+assert(listed[0]!.target_type === "config", "target_type is 'config'", `got ${listed[0]!.target_type}`);
 console.log("");
 
 // --- Test: Accept proposal ---
 console.log("Accept command:");
-const acceptOk = acceptProposal(db, id1);
-assert(acceptOk === true, "acceptProposal succeeds");
-const accepted = listProposals(db, "accepted");
+const acceptOk = acceptProposalV2(db, "p-test-001");
+assert(acceptOk === true, "acceptProposalV2 succeeds");
+const accepted = listProposalsV2(db, "applied");
 assert(accepted.length === 1, "1 accepted proposal", `got ${accepted.length}`);
-const stillNew = listProposals(db, "new");
-assert(stillNew.length === 0, "0 new proposals after accept", `got ${stillNew.length}`);
+const stillOpen = listProposalsV2(db, "open");
+assert(stillOpen.length === 0, "0 open proposals after accept", `got ${stillOpen.length}`);
 console.log("");
 
 // --- Test: Reject proposal ---
 console.log("Reject command:");
-const id2 = insertProposal(db, {
-	id: crypto.randomUUID(),
-	created_at: new Date().toISOString(),
-	session_id: realSessionId,
-	severity: "friction",
-	target: "src/bar.ts",
-	summary: "Memory leak in event listener",
-	detail: "addEventListener not removed on cleanup.",
-	evidence: "Line 15 adds listener, no removeEventListener found.",
-	status: "new",
-	dedup_hash: computeDedupHash("src/bar.ts", "friction", "Memory leak in event listener"),
-});
-const rejectOk = rejectProposal(db, id2);
-assert(rejectOk === true, "rejectProposal succeeds");
-const rejected = listProposals(db, "rejected");
+db.prepare(`
+	INSERT INTO proposals (id, created_at, session_id, target, target_type, target_path, severity, summary, title, status, dedup_key, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`).run(
+	"p-test-002", new Date().toISOString(), realSessionId, "agents_md",
+	"agents_md", "~/.pi/agent/AGENTS.md", "friction",
+	"Memory leak in event listener", "Memory leak in event listener", "open", "dh-002", new Date().toISOString(),
+);
+const rejectOk = rejectProposalV2(db, "p-test-002");
+assert(rejectOk === true, "rejectProposalV2 succeeds");
+const rejected = listProposalsV2(db, "rejected");
 assert(rejected.length === 1, "1 rejected proposal", `got ${rejected.length}`);
 console.log("");
 
 // --- Test: Stats with proposals ---
 console.log("Stats after proposals:");
 const stats2 = getStats(db);
-assert(stats2.proposalsByStatus.accepted === 1, "1 accepted in stats", `got ${stats2.proposalsByStatus.accepted}`);
+assert(stats2.proposalsByStatus.applied === 1, "1 accepted in stats", `got ${stats2.proposalsByStatus.applied}`);
 assert(stats2.proposalsByStatus.rejected === 1, "1 rejected in stats", `got ${stats2.proposalsByStatus.rejected}`);
-assert(stats2.proposalsByStatus.new === 0, "0 new in stats", `got ${stats2.proposalsByStatus.new}`);
+assert((stats2.proposalsByStatus.open ?? 0) === 0, "0 open in stats", `got ${stats2.proposalsByStatus.open ?? 0}`);
 console.log("");
 
 // --- Test: Incremental re-sync ---
