@@ -21,25 +21,75 @@ Return ONLY a JSON object, no prose, with exactly these fields:
 }
 
 Judge only what the text supports. If the user is simply continuing the task with
-no friction, use sentiment "neutral", friction_type "none", is_genuine_correction false.`;
+no friction, use sentiment "neutral", friction_type "none", is_genuine_correction false.
+
+When TOOL CALLS are shown, use them to ground your diagnosis: prefer friction_type
+"tool_misuse" when the tool name, arguments, or error reveal the mechanism of the
+failure (e.g. wrong flags, missing --repo, targeting the wrong resource).`;
 
 export const CLASSIFY_PROMPT_HASH = shortHash(CLASSIFY_PROMPT);
+
+export interface ToolCallEvidence {
+	/** Tool name (e.g. "bash", "gh", "git"). */
+	name: string;
+	/** Truncated arguments preview (e.g. the bash command string, gh subcommand+flags). */
+	argumentsPreview: string;
+}
+
+export interface ToolResultEvidence {
+	/** Tool name that produced this result. */
+	toolName: string;
+	/** Whether the tool result is an error. */
+	isError: boolean;
+	/** First N characters of the error text, null if not an error. */
+	errorHead: string | null;
+}
 
 export interface ClassifyInput {
 	userText: string;
 	assistantText: string;
 	correctionText: string | null;
+	/** Tool calls made by the assistant in this turn. */
+	toolCalls: ToolCallEvidence[];
+	/** Tool results (including errors) in this turn. */
+	toolResults: ToolResultEvidence[];
 }
 
 export function buildClassifyPrompt(input: ClassifyInput): string {
-	return [
+	const sections: string[] = [
 		"USER MESSAGE:",
 		truncate(input.userText, 1500),
 		"",
 		"ASSISTANT RESPONSE:",
 		truncate(input.assistantText, 1500),
-		input.correctionText ? `\nHEURISTIC CORRECTION HINT: ${truncate(input.correctionText, 300)}` : "",
-	].join("\n");
+	];
+
+	if (input.correctionText) {
+		sections.push("", `HEURISTIC CORRECTION HINT: ${truncate(input.correctionText, 300)}`);
+	}
+
+	// Tool-call evidence: failing tool names, truncated arguments, and error heads.
+	if (input.toolCalls.length > 0 || input.toolResults.some((r) => r.isError)) {
+		const toolLines: string[] = [];
+		for (const tc of input.toolCalls) {
+			if (tc.argumentsPreview) {
+				toolLines.push(`  ${tc.name}: ${truncate(tc.argumentsPreview, 200)}`);
+			} else {
+				toolLines.push(`  ${tc.name}`);
+			}
+		}
+		for (const tr of input.toolResults) {
+			if (tr.isError) {
+				const errLine = tr.errorHead ? ` error="${truncate(tr.errorHead, 200)}"` : "";
+				toolLines.push(`  ${tr.toolName} (FAILED)${errLine}`);
+			}
+		}
+		if (toolLines.length > 0) {
+			sections.push("", "TOOL CALLS:", ...toolLines);
+		}
+	}
+
+	return sections.join("\n");
 }
 
 /** The fields the model returns for a single turn. */

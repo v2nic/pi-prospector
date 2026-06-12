@@ -43,6 +43,9 @@ function safeParse<T>(json: string): T | null {
 	}
 }
 
+/** Max length for a user-text snippet included in the per-pair digest line. */
+const USER_TEXT_SNIPPET_MAX = 200;
+
 export function buildDigest(input: BuildDigestInput): SessionDigest {
 	const core = input.coreNodes
 		.map((n) => safeParse<TurnPairCoreProperties>(n.content_json))
@@ -55,6 +58,16 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	for (const node of input.llmNodes) {
 		const props = safeParse<TurnPairLLMProperties>(node.content_json);
 		if (props && props.user_message_id) llmByUser.set(props.user_message_id, props);
+	}
+
+	// Map message id → user text, so every pair can include a verbatim snippet
+	// (not just pairs where the regex matched). This un-gates the synthesizer
+	// from the deterministic correction regex: the regex is a ranking signal only.
+	const userTextById = new Map<string, string>();
+	for (const m of input.messages) {
+		if (m.role === "user" && m.content_text) {
+			userTextById.set(m.id, m.content_text);
+		}
 	}
 
 	const compactions = input.messages
@@ -76,6 +89,12 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		];
 		if (llm) bits.push(`sentiment=${llm.sentiment}`, `type=${llm.friction_type}`, `sev=${llm.severity}`);
 		if (p.correction_text) bits.push(`note="${p.correction_text.slice(0, 120)}"`);
+		// Un-gate: include a user-text snippet for every pair, not just regex-matched ones.
+		// The correction regex is a ranking signal only; the synthesizer must see all text.
+		const userText = userTextById.get(p.user_message_id);
+		if (userText) {
+			bits.push(`text="${truncateLine(userText, USER_TEXT_SNIPPET_MAX)}"`);
+		}
 		return bits.join(" ");
 	});
 
@@ -102,6 +121,12 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		correctionCount,
 		toolFailureCount,
 	};
+}
+
+/** Truncate a line to maxLen characters, replacing newlines with spaces. */
+function truncateLine(s: string, maxLen: number): string {
+	const flat = s.replace(/\n/g, " ");
+	return flat.length > maxLen ? `${flat.slice(0, maxLen)}…` : flat;
 }
 
 /**

@@ -25,12 +25,16 @@ const TURN_START_ROLES = new Set<string>(["user", "bashExecution", "branch_summa
 
 export interface PairToolCall {
 	name: string;
+	/** Truncated tool-call arguments for classifier evidence (e.g. bash command, gh subcommand). */
+	argumentsPreview: string;
 }
 
 export interface PairToolResult {
 	toolName: string;
 	isError: boolean;
 	textLength: number;
+	/** First N characters of the tool result text (captured for error diagnostics). */
+	errorHead: string | null;
 }
 
 export interface TurnPair {
@@ -50,27 +54,68 @@ export interface TurnPair {
 	timestamp: string | null;
 }
 
+/** Max length for a tool-call arguments preview string. */
+const ARGS_PREVIEW_MAX = 300;
+
+/** Max length for an error head string captured from tool results. */
+const ERROR_HEAD_MAX = 300;
+
+/** Truncate a string to maxLen characters, appending an ellipsis if truncated. */
+function truncateWithEllipsis(s: string, maxLen: number): string {
+	return s.length > maxLen ? `${s.slice(0, maxLen)}…` : s;
+}
+
+/**
+ * Extract a concise, human-readable arguments preview from a tool call.
+ *
+ * For `bash` calls, returns the command string.
+ * For other calls (e.g. `gh`, `git`), returns a compact representation of
+ * the arguments (subcommand + flags + key params).
+ */
+function formatArgsPreview(name: string, args: Record<string, unknown>): string {
+	if (name === "bash" || name === "Shell") {
+		const command = typeof args["command"] === "string" ? args["command"] : "";
+		return truncateWithEllipsis(command, ARGS_PREVIEW_MAX);
+	}
+	// For other tools, build a compact key=value summary.
+	const parts: string[] = [];
+	for (const [key, val] of Object.entries(args)) {
+		if (val === undefined || val === null) continue;
+		const valStr = typeof val === "string" ? val : JSON.stringify(val);
+		parts.push(`${key}=${truncateWithEllipsis(valStr, 80)}`);
+	}
+	return truncateWithEllipsis(parts.join(" "), ARGS_PREVIEW_MAX);
+}
+
 function parseToolCalls(json: string | null): PairToolCall[] {
 	if (!json) return [];
 	try {
-		const arr = JSON.parse(json) as Array<{ name?: unknown }>;
+		const arr = JSON.parse(json) as Array<{ name?: unknown; arguments?: unknown }>;
 		if (!Array.isArray(arr)) return [];
-		return arr.map((c) => ({ name: typeof c.name === "string" ? c.name : "" }));
+		return arr.map((c) => {
+			const name = typeof c.name === "string" ? c.name : "";
+			const args = (c.arguments && typeof c.arguments === "object" && c.arguments !== null) ? c.arguments as Record<string, unknown> : {};
+			return { name, argumentsPreview: formatArgsPreview(name, args) };
+		});
 	} catch {
 		return [];
 	}
 }
 
-function parseToolResults(json: string | null): PairToolResult[] {
+function parseToolResults(json: string | null, errorText: string | null): PairToolResult[] {
 	if (!json) return [];
 	try {
 		const arr = JSON.parse(json) as Array<{ toolName?: unknown; isError?: unknown; textLength?: unknown }>;
 		if (!Array.isArray(arr)) return [];
-		return arr.map((r) => ({
-			toolName: typeof r.toolName === "string" ? r.toolName : "",
-			isError: Boolean(r.isError),
-			textLength: typeof r.textLength === "number" ? r.textLength : 0,
-		}));
+		return arr.map((r) => {
+			const isError = Boolean(r.isError);
+			return {
+				toolName: typeof r.toolName === "string" ? r.toolName : "",
+				isError,
+				textLength: typeof r.textLength === "number" ? r.textLength : 0,
+				errorHead: isError && errorText ? truncateWithEllipsis(errorText.trim(), ERROR_HEAD_MAX) : null,
+			};
+		});
 	} catch {
 		return [];
 	}
@@ -117,7 +162,8 @@ export function buildTurnPairs(messages: MessageRow[]): TurnPair[] {
 			current.toolCalls.push(...parseToolCalls(m.tool_calls));
 		} else if (m.role === "toolResult") {
 			current.messageIds.push(m.id);
-			current.toolResults.push(...parseToolResults(m.tool_results));
+			const errorText = m.content_text ?? null;
+			current.toolResults.push(...parseToolResults(m.tool_results, errorText));
 		}
 	}
 

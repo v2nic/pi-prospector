@@ -114,4 +114,76 @@ describe("buildTurnPairs", () => {
 		assert.equal(pairs.length, 1);
 		assert.deepEqual(pairs[0]!.messageIds, ["u1", "a1", "a2"]);
 	});
+
+	it("captures tool call arguments and tool result error heads", () => {
+		const pairs = buildTurnPairs([
+			msg({ id: "u1", role: "user", content_text: "run it" }),
+			msg({
+				id: "a1",
+				role: "assistant",
+				content_text: "executing",
+				tool_calls: JSON.stringify([{ name: "bash", arguments: { command: "npm test -- --reporter=dot" } }]),
+			}),
+			msg({
+				id: "t1",
+				role: "toolResult",
+				content_text: "Error: ENOENT no such file",
+				tool_results: JSON.stringify([{ toolName: "bash", isError: true, textLength: 100 }]),
+			}),
+		]);
+		assert.equal(pairs[0]!.toolCalls.length, 1);
+		assert.equal(pairs[0]!.toolCalls[0]!.name, "bash");
+		assert.equal(pairs[0]!.toolCalls[0]!.argumentsPreview, "npm test -- --reporter=dot");
+		assert.equal(pairs[0]!.toolResults.length, 1);
+		assert.equal(pairs[0]!.toolResults[0]!.toolName, "bash");
+		assert.equal(pairs[0]!.toolResults[0]!.isError, true);
+		assert.ok(pairs[0]!.toolResults[0]!.errorHead!.includes("ENOENT"));
+	});
+
+	it("captures non-bash tool arguments as key=value summary", () => {
+		const pairs = buildTurnPairs([
+			msg({ id: "u1", role: "user", content_text: "create PR" }),
+			msg({
+				id: "a1",
+				role: "assistant",
+				tool_calls: JSON.stringify([{ name: "gh", arguments: { subcommand: "pr", flags: "--repo v2nic/pi-prospector", title: "Fix bug" } }]),
+			}),
+		]);
+		assert.equal(pairs[0]!.toolCalls[0]!.name, "gh");
+		// Non-bash tools get a key=value summary
+		assert.ok(pairs[0]!.toolCalls[0]!.argumentsPreview.includes("subcommand="));
+	});
+
+	it("sets errorHead to null for non-error tool results", () => {
+		const pairs = buildTurnPairs([
+			msg({ id: "u1", role: "user", content_text: "read file" }),
+			msg({
+				id: "a1",
+				role: "assistant",
+				tool_calls: JSON.stringify([{ name: "read", arguments: {} }]),
+			}),
+			msg({
+				id: "t1",
+				role: "toolResult",
+				content_text: "file contents here",
+				tool_results: JSON.stringify([{ toolName: "read", isError: false, textLength: 50 }]),
+			}),
+		]);
+		assert.equal(pairs[0]!.toolResults[0]!.isError, false);
+		assert.equal(pairs[0]!.toolResults[0]!.errorHead, null);
+	});
+
+	it("truncates long bash commands in arguments preview", () => {
+		const longCommand = "a".repeat(500);
+		const pairs = buildTurnPairs([
+			msg({ id: "u1", role: "user", content_text: "run" }),
+			msg({
+				id: "a1",
+				role: "assistant",
+				tool_calls: JSON.stringify([{ name: "bash", arguments: { command: longCommand } }]),
+			}),
+		]);
+		assert.ok(pairs[0]!.toolCalls[0]!.argumentsPreview.endsWith("…"));
+		assert.ok(pairs[0]!.toolCalls[0]!.argumentsPreview.length <= 301); // 300 + ellipsis
+	});
 });

@@ -54,13 +54,76 @@ describe("parseClassifyResponse", () => {
 
 describe("buildClassifyPrompt", () => {
 	it("includes user and assistant text and optional hint", () => {
-		const p = buildClassifyPrompt({ userText: "hello", assistantText: "world", correctionText: "use X" });
+		const p = buildClassifyPrompt({ userText: "hello", assistantText: "world", correctionText: "use X", toolCalls: [], toolResults: [] });
 		assert.ok(p.includes("hello") && p.includes("world") && p.includes("use X"));
 	});
 
 	it("omits hint when absent", () => {
-		const p = buildClassifyPrompt({ userText: "a", assistantText: "b", correctionText: null });
+		const p = buildClassifyPrompt({ userText: "a", assistantText: "b", correctionText: null, toolCalls: [], toolResults: [] });
 		assert.ok(!p.includes("HEURISTIC"));
+	});
+
+	it("includes tool calls section when tool calls have arguments", () => {
+		const p = buildClassifyPrompt({
+			userText: "push it",
+			assistantText: "running git push",
+			correctionText: null,
+			toolCalls: [{ name: "bash", argumentsPreview: "git push -u origin v2nic/gh-pr-review" }],
+			toolResults: [],
+		});
+		assert.ok(p.includes("TOOL CALLS:"), "prompt must include TOOL CALLS section");
+		assert.ok(p.includes("bash:"), "prompt must mention tool name");
+		assert.ok(p.includes("git push -u origin"), "prompt must include the arguments preview");
+	});
+
+	it("includes failing command for a tool-error turn", () => {
+		const p = buildClassifyPrompt({
+			userText: "YOU SHOULD HAVE PUSHED TO v2nic/gh-pr-review",
+			assistantText: "creating PR",
+			correctionText: null,
+			toolCalls: [
+				{ name: "bash", argumentsPreview: "git push -u origin v2nic/gh-pr-review" },
+				{ name: "bash", argumentsPreview: "gh pr create --title fix" },
+			],
+			toolResults: [
+				{ toolName: "bash", isError: true, errorHead: "Error: no --repo flag, targeting upstream" },
+			],
+		});
+		assert.ok(p.includes("TOOL CALLS:"), "prompt must include TOOL CALLS section");
+		assert.ok(p.includes("git push -u origin"), "prompt must include push command");
+		assert.ok(p.includes("gh pr create"), "prompt must include gh command");
+		assert.ok(p.includes("FAILED"), "prompt must mark failed result");
+		assert.ok(p.includes("no --repo flag"), "prompt must include error head");
+	});
+
+	it("includes non-bash tool calls", () => {
+		const p = buildClassifyPrompt({
+			userText: "add the file",
+			assistantText: "adding",
+			correctionText: null,
+			toolCalls: [{ name: "edit", argumentsPreview: "file=src/index.ts" }],
+			toolResults: [],
+		});
+		assert.ok(p.includes("TOOL CALLS:"));
+		assert.ok(p.includes("edit:"));
+	});
+
+	it("omits tool calls section when no tool calls and no errors", () => {
+		const p = buildClassifyPrompt({ userText: "hi", assistantText: "hello", correctionText: null, toolCalls: [], toolResults: [] });
+		assert.ok(!p.includes("TOOL CALLS:"));
+	});
+
+	it("shows tool calls section when there are errors even without tool calls", () => {
+		const p = buildClassifyPrompt({
+			userText: "run it",
+			assistantText: "failed",
+			correctionText: null,
+			toolCalls: [],
+			toolResults: [{ toolName: "bash", isError: true, errorHead: "command not found" }],
+		});
+		assert.ok(p.includes("TOOL CALLS:"));
+		assert.ok(p.includes("FAILED"));
+		assert.ok(p.includes("command not found"));
 	});
 });
 

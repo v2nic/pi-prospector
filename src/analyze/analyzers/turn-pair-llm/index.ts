@@ -20,7 +20,11 @@ import type {
 import { computeSourceSetHash, computeConfigHash } from "../../input-hash.js";
 import { resolveModelSpec } from "../../model-tiers.js";
 import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
-import { buildTurnPairs } from "../turn-pair-core/build.js";
+import {
+	buildTurnPairs,
+	type PairToolCall,
+	type PairToolResult,
+} from "../turn-pair-core/build.js";
 import { TURN_PAIR_CORE_DEF, type TurnPairCoreProperties } from "../turn-pair-core/index.js";
 import {
 	CLASSIFY_PROMPT,
@@ -28,6 +32,8 @@ import {
 	buildClassifyPrompt,
 	parseClassifyResponse,
 	type TurnPairLLMProperties,
+	type ToolCallEvidence,
+	type ToolResultEvidence,
 } from "./prompt.js";
 import { DEFAULT_TURN_PAIR_LLM_CONFIG, type TurnPairLLMConfig } from "./config.js";
 
@@ -42,7 +48,7 @@ export const TURN_PAIR_LLM_DEF: AnalyzerDef = {
 export const TURN_PAIR_LLM_VERSION: AnalyzerVersion = {
 	analyzerId: TURN_PAIR_LLM_DEF.id,
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/turn-pair-llm/index.ts",
 };
@@ -55,6 +61,8 @@ interface EnrichMeta {
 	userText: string;
 	assistantText: string;
 	correctionText: string | null;
+	toolCalls: ToolCallEvidence[];
+	toolResults: ToolResultEvidence[];
 	coreNodeId: string;
 }
 
@@ -109,6 +117,15 @@ export const turnPairLLMAnalyzer: Analyzer = {
 				userText: pair.userText,
 				assistantText: pair.assistantText,
 				correctionText: props.correction_text,
+				toolCalls: pair.toolCalls.map((tc): ToolCallEvidence => ({
+					name: tc.name,
+					argumentsPreview: tc.argumentsPreview,
+				})),
+				toolResults: pair.toolResults.map((tr): ToolResultEvidence => ({
+					toolName: tr.toolName,
+					isError: tr.isError,
+					errorHead: tr.errorHead,
+				})),
 				coreNodeId: node.id,
 			};
 			units.push({
@@ -133,6 +150,8 @@ export const turnPairLLMAnalyzer: Analyzer = {
 				userText: meta.userText,
 				assistantText: meta.assistantText,
 				correctionText: meta.correctionText,
+				toolCalls: meta.toolCalls,
+				toolResults: meta.toolResults,
 			}),
 			temperature: config.temperature,
 			maxTokens: 500,

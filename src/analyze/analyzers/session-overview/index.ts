@@ -47,7 +47,7 @@ export const SESSION_OVERVIEW_DEF: AnalyzerDef = {
 export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
 	analyzerId: SESSION_OVERVIEW_DEF.id,
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/session-overview/index.ts",
 };

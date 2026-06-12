@@ -361,6 +361,17 @@ the cheap, repeatable layer does the bulk of the triage and always works, the
 expensive layer is spent sparingly on the moments that warrant it, and the whole
 pipeline still produces useful structure even if the model layer is unavailable.
 
+**Tool arguments and error payloads are first-class evidence.** Analyzers may
+consume tool-call arguments and tool-result error text, not just message prose.
+This lets the classifier diagnose the *mechanism* of a failure (wrong flags, a
+missing `--repo`, targeting the wrong resource) instead of paraphrasing the
+user's complaint. The deterministic correction regex in `turn-pair-core` is a
+*ranking signal only* — it enriches pairs it matches with a `note=` hint — but
+it must never *gate* what the synthesizer is allowed to see. Every pair carries
+a truncated verbatim user-text snippet in the digest; pairs the regex misses are
+still visible to the session-level LLM. The un-gating ensures that recall is
+not bounded by regex coverage.
+
 ### Model access through the host platform, with a test seam
 
 All model calls go through one seam that, in production, defers to the host agent

@@ -151,6 +151,62 @@ describe("buildDigest", () => {
 		const digest = buildDigest({ sessionId: "s1", messages: NO_MESSAGES, coreNodes: [bad], llmNodes: [] });
 		assert.equal(digest.pairCount, 0);
 	});
+
+	it("includes user text for every pair, not just correction-matched ones (un-gate)", () => {
+		// A pair whose user text is an unrecognized correction (no regex match).
+		// Before the un-gating change, this pair would have no `note=` or `text=` field.
+		const digest = buildDigest({
+			sessionId: "s1",
+			messages: [
+				{ id: "u-circleci", session_id: "s1", parent_id: null, timestamp: null, role: "user", content_text: "This repo does not use CircleCI", content_thinking: null, tool_calls: null, tool_results: null },
+			],
+			coreNodes: [
+				coreNode("n1", { pair_index: 0, user_message_id: "u-circleci", correction_detected: false, friction_score: 0.3 }),
+			],
+			llmNodes: [],
+		});
+		const line = digest.perPairLines[0]!;
+		// The key assertion: even without correction_detected, the user text appears.
+		assert.ok(line.includes("text="), "un-gated pair must have a text= snippet");
+		assert.ok(line.includes("CircleCI"), "text= must contain the user's actual words");
+	});
+
+	it("includes user text snippet even for pairs with no correction at all", () => {
+		const digest = buildDigest({
+			sessionId: "s1",
+			messages: [
+				{ id: "u-plain", session_id: "s1", parent_id: null, timestamp: null, role: "user", content_text: "please add a test for this", content_thinking: null, tool_calls: null, tool_results: null },
+			],
+			coreNodes: [
+				coreNode("n1", { pair_index: 0, user_message_id: "u-plain", friction_score: 0.05 }),
+			],
+			llmNodes: [],
+		});
+		const line = digest.perPairLines[0]!;
+		assert.ok(line.includes("text="), "plain pair must have a text= snippet");
+		assert.ok(line.includes("add a test"), "text= must contain the user text");
+	});
+
+	it("truncates long user text to the budget", () => {
+		const longText = "a".repeat(500);
+		const digest = buildDigest({
+			sessionId: "s1",
+			messages: [
+				{ id: "u-long", session_id: "s1", parent_id: null, timestamp: null, role: "user", content_text: longText, content_thinking: null, tool_calls: null, tool_results: null },
+			],
+			coreNodes: [
+				coreNode("n1", { pair_index: 0, user_message_id: "u-long", friction_score: 0.1 }),
+			],
+			llmNodes: [],
+		});
+		const line = digest.perPairLines[0]!;
+		// The text field should be truncated to USER_TEXT_SNIPPET_MAX (200) + ellipsis
+		assert.ok(line.includes("text=\""), "must have text field");
+		// Extract the text field value and check it's truncated
+		const match = line.match(/text="([^"]*)"/);
+		assert.ok(match, "text field must be extractable");
+		assert.ok(match[1]!.length <= 201, "truncated text must be within budget");
+	});
 });
 
 describe("splitDigest", () => {
