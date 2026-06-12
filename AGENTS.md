@@ -67,7 +67,7 @@ GitHub Actions on every push and pull request to `main`. Two jobs:
 - `src/sync/` — session scanning and parsing (no LLM).
 - `src/db/` — all SQL lives here, nowhere else. Conversation and proposal queries in `db/queries.ts`; analysis-graph queries (nodes, edges, runs, configs, lineage) in `db/analysis-queries.ts`. Schema and the single migration in `db/schema.ts`.
 - `src/analyze/` — the analyzer framework. `framework.ts` (register / scan / run), `types.ts` (TypeBox schemas), `input-hash.ts` (recipe + idempotency hashing), `edge-kinds.ts` (typed-edge vocabulary and validation), `model-tiers.ts`, `proposal-materializer.ts`, `defaults.ts` (default analyzer registration). The LLM seam is `pi-llm.ts` (production, via Pi's provider system) and `mock-llm.ts` (deterministic test double).
-- `src/analyze/analyzers/<id>/` — one directory per analyzer (`turn-pair-core`, `turn-pair-llm`, `session-overview`), each with `index.ts`, its prompt(s), and `config.ts`.
+- `src/analyze/analyzers/<id>/` — one directory per analyzer (`turn-pair-core`, `turn-pair-llm`, `session-overview`, `tool-trajectory`), each with `index.ts`, its prompt(s), and `config.ts`.
 - `src/commands/` — Pi slash commands and the `prospect` tool; registered from `src/index.ts`.
 - `src/config.ts` — config loading with env overrides (`PROSPECTOR_DB_PATH`, `PROSPECTOR_SESSIONS_DIR`, `PROSPECTOR_CONFIG`).
 - `src/types.ts` — shared TypeBox schemas.

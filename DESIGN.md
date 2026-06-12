@@ -65,6 +65,14 @@ roughly the order concepts build on one another.
 - **Step** — one assistant generation within a turn: a single model response,
   possibly carrying tool calls. A turn is a sequence of one or more steps plus
   the tool results they trigger.
+- **Tool call** — a single invocation of a tool by the agent within a step,
+  carrying a name and arguments. Tool calls are the finest-grained unit of
+  agent action; their sequence within a session is the **tool-call trajectory**.
+- **Normalized arguments** — a canonical, comparison-ready representation of a
+  tool call's arguments. For `bash` calls the `command` string is the normalized
+  form (with known-flag prefixes stripped of values); for structured tools the
+  relevant fields are extracted. Normalization makes "same call" detection robust
+  against incidental differences.
 - **Compaction boundary** — a point where the conversation history was
   summarised and truncated to fit the model's context. The system is aware of
   these so it does not mistake a summary for an ordinary message.
@@ -79,10 +87,10 @@ roughly the order concepts build on one another.
   session-level summary, or a recorded error. Every node states what it is
   about, what it was built from, and exactly which recipe produced it.
 - **Node kind** — the category of a node's content. The kinds in use are
-  **metric** (deterministic measurements of a turn), **classification** (a
-  language-model judgement about a turn), **summary** (a session-level synthesis
-  that carries proposals), and **error** (a record that an analysis attempt
-  failed). An error node's identity is its recipe plus the failure's message and
+  **metric** (deterministic measurements of a turn or session), **classification**
+  (a language-model judgement about a turn), **summary** (a session-level
+  synthesis that carries proposals), and **error** (a record that an analysis
+  attempt failed). An error node's identity is its recipe plus the failure's message and
   timestamp, so every failure is a distinct, append-only record that never
   occupies the recipe identity reserved for a successful result. Failures stay
   visible and auditable, yet never mark a unit as done: the unit stays *missing*
@@ -207,6 +215,45 @@ roughly the order concepts build on one another.
   the old conclusion; it adds a newer one beside it, and both remain navigable
   “at the same level.” This is what lets you compare how analysis changed as the
   logic improved.
+
+### Trajectory analysis (deterministic, session-level)
+
+Beyond per-turn friction, the agent's **tool-call trajectory** carries patterns
+that have no verbal marker and no error flag: the same call repeated without
+change, a read-only poll waiting for external state, an action undone and
+redone, or a mutating command that fails on a missing precondition. These
+patterns are invisible to the turn-pair metrics because they span multiple
+turns and live in the *sequence* of actions, not in a single response. The
+trajectory analyzer is deterministic and session-anchored: it reads the full
+ordered stream of tool calls and emits **trajectory signal** nodes that
+contribute to the session's friction score and surface in the digest.
+
+- **Trajectory signal** — a deterministic, session-level detection of a
+  problematic tool-call pattern (stuck-loop, polling-loop, oscillation, or
+  pre-flight gap). Each signal carries the pattern name, the tool(s) involved,
+  the count of repetitions, the message ids that participate, and a
+  normalised argument fingerprint. Trajectory signals are node kind **metric**
+  (deterministic measurement of a session) and anchor to the session.
+- **Stuck-loop** — the same tool with near-identical normalised arguments
+  invoked **N** or more times without an intervening success or state change.
+  A stuck-loop indicates the agent is retrying without adaptation. Threshold
+  `stuckLoopMin` (default 3) configures the minimum repetition count.
+- **Polling-loop** — a read-only command (`gh pr view`, `gh run list`, `git
+  status`, etc.) repeated while the agent waits for an external state change.
+  A polling-loop is a specialisation of stuck-loop where the tool is
+  read-only. Threshold `pollingLoopMin` (default 3) configures the minimum
+  repetition count.
+- **Oscillation** — an action followed later by its inverse on the same
+  target (push commit A then push old-sha to the same ref; checkout `x` then
+  checkout `y` then checkout `x`; create then delete). Oscillation detection
+  looks for reversal within a sliding window. Threshold
+  `oscillationWindow` (default 10 tool calls) configures how far apart two
+  opposite actions can be and still count as oscillation.
+- **Pre-flight gap** — a mutating command that fails on a missing
+  precondition that an earlier command in the session could have established
+  (e.g. `mv` into a non-existent directory, `git push` of an unpushed
+  branch). Pre-flight gaps signal that the agent acted without checking or
+  establishing prerequisites.
 
 ### Language-model access
 

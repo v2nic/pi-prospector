@@ -25,6 +25,7 @@ import { EDGE_KINDS, REF_KINDS } from "../../edge-kinds.js";
 import { extractJsonObject } from "../turn-pair-llm/prompt.js";
 import { TURN_PAIR_CORE_DEF } from "../turn-pair-core/index.js";
 import { TURN_PAIR_LLM_DEF } from "../turn-pair-llm/index.js";
+import { TOOL_TRAJECTORY_DEF } from "../tool-trajectory/index.js";
 import { buildDigest, splitDigest } from "./digest.js";
 import { MAP_PROMPT, MAP_PROMPT_HASH, buildMapPrompt, parseMapResponse, type MapSummary } from "./prompt-map.js";
 import {
@@ -41,7 +42,7 @@ export const SESSION_OVERVIEW_DEF: AnalyzerDef = {
 	label: "Session Analysis & Proposals",
 	description: "Summarises a session and proposes improvements. Consumes turn-pair-core and turn-pair-llm nodes.",
 	anchorSpan: "full_session",
-	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_PAIR_LLM_DEF.id],
+	dependencies: [TURN_PAIR_CORE_DEF.id, TURN_PAIR_LLM_DEF.id, TOOL_TRAJECTORY_DEF.id],
 };
 
 export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
@@ -78,10 +79,12 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const core = (ctx.dependencyNodes[TURN_PAIR_CORE_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 		if (core.length === 0) return [];
 		const llm = (ctx.dependencyNodes[TURN_PAIR_LLM_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
+		const traj = (ctx.dependencyNodes[TOOL_TRAJECTORY_DEF.id] ?? []).slice().sort((a, b) => a.id.localeCompare(b.id));
 
 		const sources: SourceRef[] = [
 			...core.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 			...llm.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
+			...traj.map((n) => ({ kind: "analysis_node" as const, id: n.output_key })),
 		];
 
 		return [
@@ -98,9 +101,10 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const config = (ctx.config.configJson as unknown as SessionOverviewConfig) ?? DEFAULT_SESSION_OVERVIEW_CONFIG;
 		const coreNodes = ctx.getDependencyNodes(TURN_PAIR_CORE_DEF.id);
 		const llmNodes = ctx.getDependencyNodes(TURN_PAIR_LLM_DEF.id);
+		const trajectoryNodes = ctx.getDependencyNodes(TOOL_TRAJECTORY_DEF.id);
 		const messages = ctx.getSessionMessages(ctx.sessionId);
 
-		const digest = buildDigest({ sessionId: ctx.sessionId, messages, coreNodes, llmNodes });
+		const digest = buildDigest({ sessionId: ctx.sessionId, messages, coreNodes, llmNodes, trajectoryNodes });
 		const statsText = JSON.stringify(
 			{
 				pairs: digest.pairCount,
@@ -162,13 +166,14 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			high_signal: digest.frictionCount,
 			corrections: digest.correctionCount,
 			tool_failures: digest.toolFailureCount,
+			trajectory_signals: digest.trajectorySignalCount,
 		};
 
 		const edges: AnalysisResult["edges"] = [
 			{ toRefKind: REF_KINDS.SESSION, toRefId: ctx.sessionId, edgeKind: EDGE_KINDS.ANCHORS, ordinal: 0 },
 		];
 		let ordinal = 1;
-		for (const n of [...coreNodes, ...llmNodes]) {
+		for (const n of [...coreNodes, ...llmNodes, ...trajectoryNodes]) {
 			edges.push({ toRefKind: REF_KINDS.ANALYSIS_NODE, toRefId: n.id, edgeKind: EDGE_KINDS.CONSUMES, ordinal: ordinal++ });
 		}
 		for (const h of usedPromptHashes) {
