@@ -94,6 +94,43 @@ describe("parseReduceResponse", () => {
 	it("defaults arrays when missing", () => {
 		const r = parseReduceResponse("{}", extractJsonObject);
 		assert.deepEqual(r.key_friction_points, []);
+		assert.deepEqual(r.key_positive_signals, []);
 		assert.deepEqual(r.improvement_proposals, []);
+	});
+
+	it("parses key_positive_signals from the LLM response", () => {
+		const json = JSON.stringify({
+			session_summary: "clean session",
+			key_friction_points: [],
+			key_positive_signals: [
+				{ description: "agent recovered well after a correction", signal: "correction-then-clean-recovery" },
+				{ description: "no tool failures", signal: "low-tool-failure-density" },
+			],
+			improvement_proposals: [
+				{ title: "Add recovery pattern", summary: "encode the clean recovery", severity: "reinforcement", target_type: "agents_md" },
+			],
+		});
+		const r = parseReduceResponse(json, extractJsonObject);
+		assert.equal(r.key_positive_signals.length, 2);
+		assert.equal(r.key_positive_signals[0]!.signal, "correction-then-clean-recovery");
+		assert.equal(r.key_positive_signals[1]!.description, "no tool failures");
+		assert.equal(r.improvement_proposals.length, 1);
+		assert.equal((r.improvement_proposals[0] as Record<string, unknown>)["severity"], "reinforcement");
+	});
+
+	it("filters out invalid positive signals", () => {
+		const json = JSON.stringify({
+			session_summary: "test",
+			key_friction_points: [],
+			key_positive_signals: [
+				{ description: "valid", signal: "task-completed-without-correction" },
+				{ bad: true },
+				5,
+			],
+			improvement_proposals: [],
+		});
+		const r = parseReduceResponse(json, extractJsonObject);
+		assert.equal(r.key_positive_signals.length, 1);
+		assert.equal(r.key_positive_signals[0]!.description, "valid");
 	});
 });

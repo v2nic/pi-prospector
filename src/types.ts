@@ -97,7 +97,7 @@ export interface SyncResult {
 
 // ─── Proposals ───
 
-export type ProposalSeverity = "friction" | "correction" | "waste" | "suggestion";
+export type ProposalSeverity = "friction" | "correction" | "waste" | "suggestion" | "reinforcement";
 export type ProposalStatus = "open" | "applied" | "rejected" | "duplicate";
 
 export interface Proposal {

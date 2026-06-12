@@ -46,8 +46,13 @@ export function rankProposals(a: Proposal, b: Proposal): number {
 	return a.created_at < b.created_at ? 1 : -1;
 }
 
+function severityLabel(severity: string): string {
+	if (severity === "reinforcement") return "reinforce";
+	return severity;
+}
+
 function conciseEntry(p: Proposal): string {
-	return `  [${p.status}] ${formatConfidence(p.confidence).padStart(4)} ${p.severity} · ${formatTarget(p)}\n    ${p.title}\n    ${p.summary}\n    id: ${p.id}  ·  prospect show ${p.id}`;
+	return `  [${p.status}] ${formatConfidence(p.confidence).padStart(4)} ${severityLabel(p.severity)} · ${formatTarget(p)}\n    ${p.title}\n    ${p.summary}\n    id: ${p.id}  ·  prospect show ${p.id}`;
 }
 
 function fullEntry(p: Proposal): string {

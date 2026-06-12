@@ -4,13 +4,15 @@
 
 import { shortHash } from "../../input-hash.js";
 
-export const MAP_PROMPT = `You summarise one segment of a coding-agent session's friction signals.
-Return ONLY a JSON object:
+export const MAP_PROMPT = `You summarise one segment of a coding-agent session's signals — both friction
+and positive (things that went well). Return ONLY a JSON object:
 {
-  "segment_summary": "2-4 sentences on what happened and any friction",
+  "segment_summary": "2-4 sentences on what happened, including any friction and any positive patterns",
   "notable_points": ["short bullet", "..."]
 }
-Be concise and factual. Do not invent details beyond the signals provided.`;
+Note any clean recoveries (correction followed by smooth work), low friction, or
+task completions without correction. Be concise and factual. Do not invent details
+beyond the signals provided.`;
 
 export const MAP_PROMPT_HASH = shortHash(MAP_PROMPT);
 

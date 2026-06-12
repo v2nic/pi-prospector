@@ -77,7 +77,10 @@ roughly the order concepts build on one another.
 - **Analysis node** (or just **node**) — one self-contained piece of derived
   analysis: a set of metrics for a turn, a classification of a turn, a
   session-level summary, or a recorded error. Every node states what it is
-  about, what it was built from, and exactly which recipe produced it.
+  about, what it was built from, and exactly which recipe produced it. A session
+  with zero friction still produces a summary node carrying **positive signals**
+  and, when warranted, **reinforcement proposals** — it is never invisible to
+  the pipeline.
 - **Node kind** — the category of a node's content. The kinds in use are
   **metric** (deterministic measurements of a turn), **classification** (a
   language-model judgement about a turn), **summary** (a session-level synthesis
@@ -234,13 +237,36 @@ roughly the order concepts build on one another.
 - **Proposal** — a single, concrete, reviewable suggestion to improve a steering
   artifact: what to change, where, why, with what confidence, and backed by
   evidence drawn from the conversation. Proposals are the system's output and the
-  only thing a human is asked to act on.
+  only thing a human is asked to act on. A proposal is either a **friction
+  proposal** or a **reinforcement proposal**, distinguished by its severity.
+- **Friction proposal** — a proposal whose severity is one of *friction*,
+  *correction*, or *waste*: it identifies something that went wrong and suggests
+  how to fix it. This is the original and default proposal kind.
+- **Reinforcement proposal** — a proposal whose severity is *reinforcement*: it
+  identifies something the agent did *right* — a positive pattern worth encoding
+  into standing instructions so the agent keeps doing it. Reinforcement proposals
+  are the product of analysing successful sessions and contrast. They carry the
+  same target/evidence/confidence structure as friction proposals, but their
+  intent is "keep doing X / encode the working pattern," not "fix what went wrong."
 - **Target** — what a proposal would change (a category such as a standing
   instruction file, a skill, a tool description, or configuration, plus an
   optional location within it).
 - **Severity** — the nature of the signal behind a proposal (for example
-  friction, correction, waste, suggestion, or insight). It describes *why the
-  proposal exists*, not how urgent it is.
+  friction, correction, waste, suggestion, insight, or reinforcement). It
+  describes *why the proposal exists*, not how urgent it is.
+- **Positive signal** — a deterministic or model-derived observation that
+  something went *well* in a session: the task was completed without correction,
+  a correction was followed by a clean recovery, or the tool-failure density was
+  low. Positive signals are recorded in the session digest alongside friction
+  signals and give the synthesiser **success/failure contrast** — a baseline of
+  "normal" or "good" against which subtle friction becomes more visible.
+- **Success/failure contrast** — the technique of comparing successful and
+  failed trajectories for the same class of task, so the synthesiser can spot
+  patterns that friction-only analysis misses. ExpeL (Zhao et al. 2023) shows
+  that comparing successes against failures is what produces useful insights;
+  summarising only one side is insufficient. In pi-prospector the contrast starts
+  within-session (a clean pair versus a friction pair in the same session) and
+  may later extend cross-session.
 - **Materialisation** — the step that lifts proposals out of a summary node into
   the fast, reviewable proposal store, attaching the evidence trail via
   *produces* and *anchors* edges. That trail is browsable after the fact: from a
@@ -430,7 +456,8 @@ To keep the system focused, the following are explicitly *not* part of it:
 - **No bespoke model or credential management.** Model access is delegated to the
   host platform; tiers abstract concrete models.
 - **No cross-session meta-analysis as a first concern.** The unit of analysis is a
-  session; broader pattern-finding builds on top of that later.
+  session; broader pattern-finding builds on top of that later. Within-session
+  **success/failure contrast** is in scope; cross-session consolidation/dedup is not.
 - **No real session data inside the project.** All test material is hand-written
   synthetic conversation; real user sessions never enter source, tests, history,
   or build artifacts.
@@ -454,6 +481,9 @@ When extending this system, ask in order:
    side state.
 5. **Is the evidence trail intact?** Any new node that informs a proposal must be
    reachable, by edges, from that proposal back to the conversation.
+6. **Does a clean session still produce output?** A session with no friction is a
+   first-class analysis subject. A change that would make the pipeline skip or
+   produce nothing for a clean session is a recall regression.
 
 Hold to these and the system stays what it is meant to be: a trustworthy,
 cheaply-recomputable engine that turns the friction in past agent conversations

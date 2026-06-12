@@ -47,7 +47,7 @@ export const SESSION_OVERVIEW_DEF: AnalyzerDef = {
 export const SESSION_OVERVIEW_VERSION: AnalyzerVersion = {
 	analyzerId: SESSION_OVERVIEW_DEF.id,
 	major: 1,
-	minor: 0,
+	minor: 1,
 	implementationKind: "in_process_llm",
 	codeRef: "src/analyze/analyzers/session-overview/index.ts",
 };
@@ -108,6 +108,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 				corrections: digest.correctionCount,
 				tool_failures: digest.toolFailureCount,
 				compactions: digest.compactionCount,
+				positive_signals: digest.positiveSignals,
 			},
 			null,
 			2,
@@ -148,7 +149,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 		const reduceRes = await ctx.llm({
 			model: resolveModelSpec(config.reduceTier, ctx.modelTiers),
 			system: ctx.prompts["reduce"] ?? REDUCE_PROMPT,
-			user: buildReducePrompt({ digestOrSummaries: reduceInput, stats: statsText }),
+			user: buildReducePrompt({ digestOrSummaries: reduceInput, stats: statsText, positiveSignals: digest.positiveSignals }),
 			temperature: config.temperature,
 			maxTokens: 2000,
 		});
@@ -162,6 +163,7 @@ export const sessionOverviewAnalyzer: Analyzer = {
 			high_signal: digest.frictionCount,
 			corrections: digest.correctionCount,
 			tool_failures: digest.toolFailureCount,
+			positive_signals: digest.positiveSignals,
 		};
 
 		const edges: AnalysisResult["edges"] = [

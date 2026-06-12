@@ -19,6 +19,7 @@ export interface DigestSegment {
 export interface SessionDigest {
 	header: string;
 	perPairLines: string[];
+	positiveSignals: string[];
 	text: string;
 	totalChars: number;
 	pairCount: number;
@@ -26,6 +27,12 @@ export interface SessionDigest {
 	compactionCount: number;
 	correctionCount: number;
 	toolFailureCount: number;
+	/** True when the session had at least one correction followed by a clean (no-friction) pair — a "good pivot". */
+	cleanRecovery: boolean;
+	/** True when the session completed all turns without any correction or high-signal friction. */
+	taskCompletedWithoutCorrection: boolean;
+	/** True when fewer than half the turns had a tool failure (density check). */
+	lowToolFailureDensity: boolean;
 }
 
 export interface BuildDigestInput {
@@ -66,6 +73,32 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 	const correctionCount = core.filter((p) => p.correction_detected).length;
 	const toolFailureCount = core.reduce((sum, p) => sum + p.tool_failure_count, 0);
 
+	// ── Positive signals ──────────────────────────────────────────────────
+	// task-completed-without-correction: zero corrections across all pairs.
+	const taskCompletedWithoutCorrection = core.length > 0 && correctionCount === 0;
+
+	// correction-then-clean-recovery: at least one correction followed by a
+	// clean (low-friction, no correction) pair — the agent recovered gracefully.
+	let cleanRecovery = false;
+	for (let i = 0; i < core.length - 1; i++) {
+		if (core[i]!.correction_detected) {
+			const next = core[i + 1]!;
+			if (!next.correction_detected && !next.high_signal) {
+				cleanRecovery = true;
+				break;
+			}
+		}
+	}
+
+	// low tool-failure density: fewer than half the pairs have a tool failure.
+	const pairsWithToolFailure = core.filter((p) => p.tool_failure_count > 0).length;
+	const lowToolFailureDensity = core.length > 0 && pairsWithToolFailure < core.length / 2;
+
+	const positiveSignals: string[] = [];
+	if (taskCompletedWithoutCorrection) positiveSignals.push("task-completed-without-correction");
+	if (cleanRecovery) positiveSignals.push("correction-then-clean-recovery");
+	if (lowToolFailureDensity) positiveSignals.push("low-tool-failure-density");
+
 	const perPairLines = core.map((p) => {
 		const llm = llmByUser.get(p.user_message_id);
 		const bits = [
@@ -83,17 +116,25 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		`## Session ${input.sessionId}`,
 		`pairs=${core.length} high_signal=${frictionCount} corrections=${correctionCount} tool_failures=${toolFailureCount}`,
 	];
+	if (positiveSignals.length > 0) {
+		headerLines.push(`positive_signals=${positiveSignals.join(",")}`);
+	}
 	if (compactions.length > 0) {
 		headerLines.push("", "### Compaction summaries (verbatim)");
 		for (const c of compactions) headerLines.push(c.slice(0, 2000));
 	}
 	const header = headerLines.join("\n");
 
-	const text = [header, "", "### Per-pair signals", ...perPairLines].join("\n");
+	const sections = [header, "", "### Per-pair signals", ...perPairLines];
+	if (positiveSignals.length > 0) {
+		sections.push("", "### Positive signals", ...positiveSignals.map((s) => `- ${s}`));
+	}
+	const text = sections.join("\n");
 
 	return {
 		header,
 		perPairLines,
+		positiveSignals,
 		text,
 		totalChars: text.length,
 		pairCount: core.length,
@@ -101,6 +142,9 @@ export function buildDigest(input: BuildDigestInput): SessionDigest {
 		compactionCount: compactions.length,
 		correctionCount,
 		toolFailureCount,
+		cleanRecovery,
+		taskCompletedWithoutCorrection,
+		lowToolFailureDensity,
 	};
 }
 
