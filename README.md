@@ -1,5 +1,8 @@
 # pi-prospector
 
+> [!WARNING]  
+> This repository is now archived. See [elecnix/pi-prospector](https://github.com/elecnix/pi-prospector) instead.
+
 Incremental session analysis and proposal generation for the [Pi coding agent](https://github.com/earendil-works/pi).
 
 pi-prospector reads your Pi session transcripts, indexes them into a local SQLite database, and builds an **append-only analysis graph** over them — measuring every turn deterministically and using an LLM only where the signal warrants it. From that graph it surfaces concrete, ranked proposals to improve your prompts, skills, and configuration. It never applies them. You decide what to develop.
